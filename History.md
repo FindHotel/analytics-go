@@ -8,6 +8,12 @@ v3.0.0 / 2016-06-02
  * [What's New in v3](https://segment.com/docs/sources/server/go/#what-s-new-in-v3).
 
 
+v2.1.1 / 2016-04-26
+===================
+
+ * Fix blocking the goroutine when Close is the first call.
+ * Fix blocking the goroutine when the message queue fills up.
+
 v2.1.0 / 2015-12-28
 ===================
 
