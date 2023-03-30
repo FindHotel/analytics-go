@@ -320,7 +320,6 @@ func (c *s3Client) upload(r io.Reader) error {
 	input := &s3manager.UploadInput{
 		Body:   r,
 		Bucket: aws.String(c.config.S3.Bucket),
-		ACL:    aws.String("public-read"),
 		Key:    aws.String(key),
 	}
 	_, err := c.uploader.Upload(input)
