@@ -2,17 +2,15 @@ package analytics
 
 import (
 	"fmt"
-	"io"
-	"net"
-	"net/http"
+
 	"os"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/avast/retry-go"
-	metrics "github.com/rcrowley/go-metrics"
-	datadog "github.com/zorkian/go-datadog-api"
+	ddstatsd "github.com/DataDog/datadog-go/v5/statsd"
+
+	"github.com/rcrowley/go-metrics"
 )
 
 // Reporter provides a function to reporting metrics.
@@ -89,7 +87,7 @@ type LogReporter struct {
 	tags   []string
 }
 
-// NewLogReporter returns new log repoter ready to use.
+// NewLogReporter returns new log reporter ready to use.
 func NewLogReporter(l ...Logger) *LogReporter {
 	if len(l) == 0 {
 		l = []Logger{newDefaultLogger()}
@@ -114,25 +112,11 @@ func (r *LogReporter) AddTags(tags ...string) {
 	r.tags = append(r.tags, tags...)
 }
 
-func newHTTPTransport() *http.Transport {
-	return &http.Transport{
-		DisableKeepAlives: true,
-		Dial: (&net.Dialer{
-			Timeout: 30 * time.Second,
-		}).Dial,
-		TLSHandshakeTimeout: 30 * time.Second,
-	}
-}
-
 // NewDatadogReporter is a factory method to create Datadog reporter
 // with sane defaults.
-func NewDatadogReporter(apiKey, appKey string, tags ...string) *DatadogReporter {
+func NewDatadogReporter(client ddstatsd.ClientInterface, tags ...string) *DatadogReporter {
 	dr := DatadogReporter{
-		Client: datadog.NewClient(apiKey, appKey),
-	}
-	dr.Client.HttpClient = &http.Client{
-		Timeout:   time.Second * 30,
-		Transport: newHTTPTransport(),
+		Client: client,
 	}
 	dr.logger = newDefaultLogger()
 	dr.tags = append(tags, "transport:http", "sdkversion:go-"+Version)
@@ -147,10 +131,9 @@ func (dd *DatadogReporter) WithLogger(logger Logger) *DatadogReporter {
 
 // DatadogReporter reports metrics to DataDog.
 type DatadogReporter struct {
-	Client  *datadog.Client
-	logger  Logger
-	metrics []datadog.Metric
-	tags    []string
+	Client ddstatsd.ClientInterface
+	logger Logger
+	tags   []string
 	sync.Mutex
 }
 
@@ -163,36 +146,15 @@ func (dd *DatadogReporter) AddTags(tags ...string) {
 
 // Flush flushes reported metrics.
 func (dd *DatadogReporter) Flush() error {
-	dd.Lock()
-	metrics := dd.metrics
-	dd.metrics = []datadog.Metric{}
-	dd.Unlock()
-
-	err := retry.Do(
-		func() error {
-			return dd.Client.PostMetrics(metrics)
-		},
-		retry.OnRetry(func(iteration uint, err error) {
-			dd.logger.Errorf("Reporting metrics failed for the %d time: %s", iteration, err)
-		}),
-		retry.RetryIf(func(err error) bool {
-			if err == io.EOF {
-				dd.Client.HttpClient.Transport = newHTTPTransport()
-				return true
-			}
-			return false
-		}),
-	)
-
+	err := dd.Client.Flush()
 	if err != nil {
-		return fmt.Errorf("submission metrics to DataDog failed for the last time, metrics are gone: %s", err)
+		dd.logger.Errorf("Flushing metrics failed: %s", err)
 	}
-	return nil
+	return err
 }
 
 // Report sends provided metric to Datadog.
 func (dd *DatadogReporter) Report(metricName string, value interface{}, tags []string, ts time.Time) {
-	metricType := "gauge"
 	metricValue, err := func() (float64, error) {
 		switch v := value.(type) {
 		case float64:
@@ -208,18 +170,12 @@ func (dd *DatadogReporter) Report(metricName string, value interface{}, tags []s
 		dd.logger.Errorf("Serializing value for metric %s(%+v) failed: %s", metricName, value, err)
 		return
 	}
-	metricTimestamp := float64(ts.Truncate(time.Minute).Unix())
 	allTags := append(tags, "hostname:"+hostname)
 	allTags = append(allTags, dd.tags...)
-	metric := datadog.Metric{
-		Metric: &metricName,
-		Type:   &metricType,
-		Tags:   allTags,
-		Points: []datadog.DataPoint{{&metricTimestamp, &metricValue}},
+	err = dd.Client.Gauge(metricName, metricValue, allTags, 1)
+	if err != nil {
+		dd.logger.Errorf("Reporting metric %s(%+v) failed: %s", metricName, value, err)
 	}
-	dd.Lock()
-	dd.metrics = append(dd.metrics, metric)
-	dd.Unlock()
 }
 
 func (c *client) resetMetrics() {
