@@ -407,7 +407,7 @@ func (c *client) reportMetrics(name string, value int64, tags []string) {
 		return
 	}
 
-	err := statsd.Count("submitted.success", value, tags, 1)
+	err := statsd.Count(name, value, tags, 1)
 	if err != nil {
 		c.errorf("error submitting metric %s - %s", name, err)
 	}
