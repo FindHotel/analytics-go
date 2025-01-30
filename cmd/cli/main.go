@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/FindHotel/analytics-go"
+	"github.com/FindHotel/analytics-go/v4"
 	"github.com/segmentio/conf"
 )
 

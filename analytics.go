@@ -5,17 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"strconv"
 	"sync"
 	"time"
-
-	metrics "github.com/rcrowley/go-metrics"
 )
 
 // Version of the client.
-const Version = "3.5.0"
+const Version = "4.0.0"
 
 // Client is the main API exposed by the analytics package.
 // Values that satsify this interface are returned by the client constructors
@@ -60,12 +57,6 @@ type client struct {
 	// This HTTP client is used to send requests to the backend, it uses the
 	// HTTP transport provided in the configuration.
 	http http.Client
-
-	metricsRegistry metrics.Registry
-
-	successCounters countersFunc
-	failureCounters countersFunc
-	droppedCounters countersFunc
 }
 
 // NewDiscardClient returns client which discards all messages.
@@ -102,7 +93,6 @@ func NewWithConfig(writeKey string, config Config) (Client, error) {
 		return nil, err
 	}
 	go c.loop()
-	go c.loopMetrics()
 
 	return c, nil
 }
@@ -113,18 +103,13 @@ func newWithConfig(writeKey string, config Config) (*client, error) {
 	}
 
 	c := &client{
-		Config:          makeConfig(config),
-		key:             writeKey,
-		msgs:            make(chan Message, 100),
-		quit:            make(chan struct{}),
-		shutdown:        make(chan struct{}),
-		http:            makeHTTPClient(config.Transport),
-		metricsRegistry: metrics.NewRegistry(),
+		Config:   makeConfig(config),
+		key:      writeKey,
+		msgs:     make(chan Message, 100),
+		quit:     make(chan struct{}),
+		shutdown: make(chan struct{}),
+		http:     makeHTTPClient(config.Transport),
 	}
-
-	c.successCounters = c.newCounters("submitted.success")
-	c.failureCounters = c.newCounters("submitted.failure")
-	c.droppedCounters = c.newCounters("dropped")
 
 	return c, nil
 }
@@ -141,7 +126,7 @@ func makeHTTPClient(transport http.RoundTripper) http.Client {
 
 func (c *client) Enqueue(msg Message) (err error) {
 	if err = msg.validate(); err != nil {
-		c.droppedCounters(msg.tags()...).Inc(1)
+		c.notifyDropped(msg, err, 1)
 		return
 	}
 
@@ -200,8 +185,8 @@ func (c *client) Enqueue(msg Message) (err error) {
 		// and instead report that the client has been closed and shouldn't be
 		// used anymore.
 		if recover() != nil {
-			c.droppedCounters(msg.tags()...).Inc(1)
 			err = ErrClosed
+			c.notifyDropped(msg, err, 1)
 		}
 	}()
 
@@ -316,7 +301,7 @@ func (c *client) report(res *http.Response) (err error) {
 		return
 	}
 
-	if body, err = ioutil.ReadAll(res.Body); err != nil {
+	if body, err = io.ReadAll(res.Body); err != nil {
 		c.errorf("response %d %s - %s", res.StatusCode, res.Status, err)
 		return
 	}
@@ -416,9 +401,21 @@ func (c *client) maxBatchBytes() int {
 	return maxBatchBytes - len(b)
 }
 
+func (c *client) reportMetrics(name string, value int64, tags []string) {
+	statsd := c.Config.DDStatsdClient
+	if statsd == nil {
+		return
+	}
+
+	err := statsd.Count(name, value, tags, 1)
+	if err != nil {
+		c.errorf("error submitting metric %s - %s", name, err)
+	}
+}
+
 func (c *client) notifySuccess(msgs []message) {
 	for _, m := range msgs {
-		c.successCounters(m.Msg().tags()...).Inc(1)
+		c.reportMetrics("submitted.success", 1, m.Msg().tags())
 	}
 	if c.Callback != nil {
 		for _, m := range msgs {
@@ -429,7 +426,7 @@ func (c *client) notifySuccess(msgs []message) {
 
 func (c *client) notifyFailure(msgs []message, err error) {
 	for _, m := range msgs {
-		c.failureCounters(m.Msg().tags()...).Inc(1)
+		c.reportMetrics("submitted.failure", 1, m.Msg().tags())
 	}
 	if c.Callback != nil {
 		for _, m := range msgs {
@@ -438,15 +435,19 @@ func (c *client) notifyFailure(msgs []message, err error) {
 	}
 }
 
+func (c *client) notifyDropped(m Message, err error, count int64) {
+	c.reportMetrics("dropped", count, m.tags())
+}
+
 func (c *client) notifyFailureMsg(m Message, err error, count int64) {
-	c.failureCounters(m.tags()...).Inc(count)
+	c.reportMetrics("submitted.failure", count, m.tags())
 	if c.Callback != nil {
 		c.Callback.Failure(m, err)
 	}
 }
 
 func (c *client) notifySuccessMsg(m Message, count int64) {
-	c.successCounters(m.tags()...).Inc(count)
+	c.reportMetrics("submitted.success", count, m.tags())
 	if c.Callback != nil {
 		c.Callback.Success(m)
 	}

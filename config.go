@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	ddstatsd "github.com/DataDog/datadog-go/v5/statsd"
 	"github.com/segmentio/backo-go"
 	"github.com/xtgo/uuid"
 )
@@ -61,9 +62,8 @@ type Config struct {
 	// If not set the client will fallback to use a default retry policy.
 	RetryAfter func(int) time.Duration
 
-	// Reporters are used to report metrics to external reporting system such
-	// as DataDog. Useful implementations are DatadogReporter and LogReporter.
-	Reporters []Reporter
+	// DDStatsdClient is the client used to send metrics to Datadog.
+	DDStatsdClient ddstatsd.ClientInterface
 
 	// A function called by the client to generate unique message identifiers.
 	// The client uses a UUID generator if none is provided.

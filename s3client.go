@@ -4,21 +4,21 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 type uploader interface {
-	Upload(input *s3manager.UploadInput, options ...func(*s3manager.Uploader)) (*s3manager.UploadOutput, error)
+	Upload(ctx context.Context, input *s3.PutObjectInput, options ...func(*manager.Uploader)) (*manager.UploadOutput, error)
 }
 
 type s3Client struct {
@@ -26,7 +26,7 @@ type s3Client struct {
 	config     S3ClientConfig
 	apiContext *apiContext
 	uploader   uploader
-	//s3client works only with one type of msg
+	//s3Client works only with one type of msg
 	tagsOnlyMsg tagsOnlyMsg
 }
 
@@ -39,7 +39,7 @@ type S3 struct {
 	// Examples: tuna, salmon, haring, etc. Each system receives its own stream.
 	Stream string
 
-	// MaxBatchBytes size repsresents the size of buffer or file and when events are flushed
+	// MaxBatchBytes size represents the size of buffer or file and when events are flushed
 	MaxBatchBytes int
 
 	// BufferFilePath if specified the temp file will be used to store the data
@@ -50,9 +50,9 @@ type S3 struct {
 
 	KeyConstructor func(now func() Time, uid func() string) string
 
-	UploaderOptions []func(*s3manager.Uploader)
+	UploaderOptions []func(*manager.Uploader)
 
-	Session *session.Session
+	Cfg *aws.Config
 }
 
 // S3ClientConfig provides configuration for S3 Client.
@@ -76,7 +76,7 @@ func NewS3ClientWithConfig(config S3ClientConfig) (Client, error) {
 
 	client.msgs = make(chan Message, 1024) // overrite the buffer
 
-	uploader := s3manager.NewUploader(cfg.S3.Session, cfg.S3.UploaderOptions...)
+	uploader := manager.NewUploader(s3.NewFromConfig(*cfg.S3.Cfg), cfg.S3.UploaderOptions...)
 
 	c := &s3Client{
 		client: client,
@@ -88,14 +88,13 @@ func NewS3ClientWithConfig(config S3ClientConfig) (Client, error) {
 		uploader: uploader,
 	}
 
-	go c.loop()        // custom implementation
-	go c.loopMetrics() // reuse client's implementation
+	go c.loop(context.Background()) // custom implementation
 
 	return c, nil
 }
 
 // a copy of client.loop() function.
-func (c *s3Client) loop() {
+func (c *s3Client) loop(ctx context.Context) {
 	defer close(c.shutdown)
 
 	wg := &sync.WaitGroup{}
@@ -119,10 +118,10 @@ func (c *s3Client) loop() {
 	for {
 		select {
 		case msg := <-c.msgs:
-			c.push(&bw, msg, wg, ex)
+			c.push(ctx, &bw, msg, wg, ex)
 
 		case <-tick.C:
-			c.flush(&bw, wg, ex)
+			c.flush(ctx, &bw, wg, ex)
 
 		case <-c.quit:
 			c.debugf("exit requested – draining messages")
@@ -131,10 +130,10 @@ func (c *s3Client) loop() {
 			// messages can be pushed and otherwise the loop would never end.
 			close(c.msgs)
 			for msg := range c.msgs {
-				c.push(&bw, msg, wg, ex)
+				c.push(ctx, &bw, msg, wg, ex)
 			}
 
-			c.flush(&bw, wg, ex)
+			c.flush(ctx, &bw, wg, ex)
 			bw.buf.Close()
 			c.debugf("exit")
 			return
@@ -197,7 +196,7 @@ func (m *tagsOnlyMsg) validate() error {
 	return nil
 }
 
-func (c *s3Client) push(encoder *bufferedEncoder, m Message, wg *sync.WaitGroup, ex *executor) {
+func (c *s3Client) push(ctx context.Context, encoder *bufferedEncoder, m Message, wg *sync.WaitGroup, ex *executor) {
 	c.setTagsIfExsist(m)
 
 	ready, err := c.encodeMessage(encoder, m)
@@ -209,11 +208,11 @@ func (c *s3Client) push(encoder *bufferedEncoder, m Message, wg *sync.WaitGroup,
 
 	if ready {
 		c.debugf("exceeded messages batch limit with batch of %d messages – flushing", encoder.messages)
-		c.sendAsync(encoder, wg, ex)
+		c.sendAsync(ctx, encoder, wg, ex)
 	}
 }
 
-// we need this functio to send metrics
+// we need this function to send metrics
 func (c *s3Client) setTagsIfExsist(m Message) {
 	if len(c.tagsOnlyMsg.t) == 0 {
 		c.tagsOnlyMsg.t = m.tags()
@@ -241,7 +240,7 @@ func (c *s3Client) encodeMessage(bw *bufferedEncoder, m Message) (ready bool, er
 }
 
 // Asynchronously send a batched requests.
-func (c *s3Client) sendAsync(bw *bufferedEncoder, wg *sync.WaitGroup, ex *executor) {
+func (c *s3Client) sendAsync(ctx context.Context, bw *bufferedEncoder, wg *sync.WaitGroup, ex *executor) {
 	if bw.BytesLen() == 0 {
 		c.errorf("empty buffer, send is not possible")
 		return
@@ -266,7 +265,7 @@ func (c *s3Client) sendAsync(bw *bufferedEncoder, wg *sync.WaitGroup, ex *execut
 				c.errorf("panic - %s", err)
 			}
 		}()
-		c.send(buf, msgs)
+		c.send(ctx, buf, msgs)
 	}) {
 		wg.Done()
 		c.errorf("sending messages failed - %s", ErrTooManyRequests)
@@ -274,16 +273,16 @@ func (c *s3Client) sendAsync(bw *bufferedEncoder, wg *sync.WaitGroup, ex *execut
 	}
 }
 
-func (c *s3Client) flush(bw *bufferedEncoder, wg *sync.WaitGroup, ex *executor) {
+func (c *s3Client) flush(ctx context.Context, bw *bufferedEncoder, wg *sync.WaitGroup, ex *executor) {
 	msgs := bw.TotalMsgs()
 	if msgs > 0 {
 		c.debugf("flushing %d messages", msgs)
-		c.sendAsync(bw, wg, ex)
+		c.sendAsync(ctx, bw, wg, ex)
 	}
 }
 
 // Send batch request.
-func (c *s3Client) send(buf encodedBuffer, msgs int) {
+func (c *s3Client) send(ctx context.Context, buf encodedBuffer, msgs int) {
 	const attempts = 10
 	defer buf.Close()
 
@@ -293,7 +292,7 @@ func (c *s3Client) send(buf encodedBuffer, msgs int) {
 			c.errorf("can't get reader", err)
 		}
 
-		if err = c.upload(reader); err == nil {
+		if err = c.upload(ctx, reader); err == nil {
 			c.notifySuccessMsg(&c.tagsOnlyMsg, int64(msgs))
 			return
 		}
@@ -313,17 +312,16 @@ func (c *s3Client) send(buf encodedBuffer, msgs int) {
 }
 
 // Upload batch to S3.
-func (c *s3Client) upload(r io.Reader) error {
+func (c *s3Client) upload(ctx context.Context, r io.Reader) error {
 	key := c.config.S3.KeyConstructor(c.now, uid)
 	c.debugf("uploading to s3://%s/%s", c.config.S3.Bucket, key)
 
-	input := &s3manager.UploadInput{
+	input := &s3.PutObjectInput{
 		Body:   r,
 		Bucket: aws.String(c.config.S3.Bucket),
-		ACL:    aws.String("public-read"),
 		Key:    aws.String(key),
 	}
-	_, err := c.uploader.Upload(input)
+	_, err := c.uploader.Upload(ctx, input)
 	return err
 }
 
@@ -436,7 +434,7 @@ type fileBuffer struct {
 func newFileBuffer(path string) (*fileBuffer, error) {
 	dir, file := filepath.Split(path)
 
-	fd, err := ioutil.TempFile(dir, file)
+	fd, err := os.CreateTemp(dir, file)
 	if err != nil {
 		return nil, err
 	}
