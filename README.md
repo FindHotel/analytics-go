@@ -17,7 +17,7 @@ Latest stable branch is [master](https://github.com/FindHotel/analytics-go/tree/
 If you use [go modules](https://blog.golang.org/v2-go-modules):
 
 ```shell
-    go get -u github.com/FindHotel/analytics-go@3.7.0 
+    go get -u github.com/FindHotel/analytics-go@v4.0.0 
 ```
 
 ## Documentation
@@ -38,7 +38,7 @@ package main
 import (
     "os"
 
-    analytics "github.com/FindHotel/analytics-go"
+    analytics "github.com/FindHotel/analytics-go/v4"
 )
 
 func main() {

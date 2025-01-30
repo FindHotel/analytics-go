@@ -1,4 +1,4 @@
-module github.com/FindHotel/analytics-go
+module github.com/FindHotel/analytics-go/v4
 
 go 1.21
 
