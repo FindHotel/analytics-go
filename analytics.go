@@ -401,12 +401,12 @@ func (c *client) maxBatchBytes() int {
 	return maxBatchBytes - len(b)
 }
 
-func (c *client) reportMetrics(name string, value float64, tags []string) {
+func (c *client) reportMetrics(name string, value int64, tags []string) {
 	if c.DDStatsdClient == nil {
 		return
 	}
 
-	err := c.Config.DDStatsdClient.Gauge("submitted.success", value, tags, 1)
+	err := c.Config.DDStatsdClient.Count("submitted.success", value, tags, 1)
 	if err != nil {
 		c.errorf("error submitting metric %s - %s", name, err)
 	}
@@ -435,18 +435,18 @@ func (c *client) notifyFailure(msgs []message, err error) {
 }
 
 func (c *client) notifyDropped(m Message, err error, count int64) {
-	c.reportMetrics("dropped", float64(count), m.tags())
+	c.reportMetrics("dropped", count, m.tags())
 }
 
 func (c *client) notifyFailureMsg(m Message, err error, count int64) {
-	c.reportMetrics("submitted.failure", float64(count), m.tags())
+	c.reportMetrics("submitted.failure", count, m.tags())
 	if c.Callback != nil {
 		c.Callback.Failure(m, err)
 	}
 }
 
 func (c *client) notifySuccessMsg(m Message, count int64) {
-	c.reportMetrics("submitted.success", float64(count), m.tags())
+	c.reportMetrics("submitted.success", count, m.tags())
 	if c.Callback != nil {
 		c.Callback.Success(m)
 	}
