@@ -15,7 +15,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 type uploader interface {
@@ -27,7 +26,7 @@ type s3Client struct {
 	config     S3ClientConfig
 	apiContext *apiContext
 	uploader   uploader
-	//s3client works only with one type of msg
+	//s3Client works only with one type of msg
 	tagsOnlyMsg tagsOnlyMsg
 }
 
@@ -40,7 +39,7 @@ type S3 struct {
 	// Examples: tuna, salmon, haring, etc. Each system receives its own stream.
 	Stream string
 
-	// MaxBatchBytes size repsresents the size of buffer or file and when events are flushed
+	// MaxBatchBytes size represents the size of buffer or file and when events are flushed
 	MaxBatchBytes int
 
 	// BufferFilePath if specified the temp file will be used to store the data
@@ -321,7 +320,6 @@ func (c *s3Client) upload(r io.Reader) error {
 	input := &s3.PutObjectInput{
 		Body:   r,
 		Bucket: aws.String(c.config.S3.Bucket),
-		ACL:    types.ObjectCannedACLPublicRead,
 		Key:    aws.String(key),
 	}
 	_, err := c.uploader.Upload(context.Background(), input)
