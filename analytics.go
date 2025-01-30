@@ -402,11 +402,12 @@ func (c *client) maxBatchBytes() int {
 }
 
 func (c *client) reportMetrics(name string, value int64, tags []string) {
-	if c.DDStatsdClient == nil {
+	statsd := c.Config.DDStatsdClient
+	if statsd == nil {
 		return
 	}
 
-	err := c.Config.DDStatsdClient.Count("submitted.success", value, tags, 1)
+	err := statsd.Count("submitted.success", value, tags, 1)
 	if err != nil {
 		c.errorf("error submitting metric %s - %s", name, err)
 	}
