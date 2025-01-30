@@ -89,7 +89,6 @@ func NewS3ClientWithConfig(config S3ClientConfig) (Client, error) {
 	}
 
 	go c.loop(context.Background()) // custom implementation
-	go c.loopMetrics()              // reuse client's implementation
 
 	return c, nil
 }
@@ -213,7 +212,7 @@ func (c *s3Client) push(ctx context.Context, encoder *bufferedEncoder, m Message
 	}
 }
 
-// we need this functio to send metrics
+// we need this function to send metrics
 func (c *s3Client) setTagsIfExsist(m Message) {
 	if len(c.tagsOnlyMsg.t) == 0 {
 		c.tagsOnlyMsg.t = m.tags()
