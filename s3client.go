@@ -88,14 +88,14 @@ func NewS3ClientWithConfig(config S3ClientConfig) (Client, error) {
 		uploader: uploader,
 	}
 
-	go c.loop()        // custom implementation
-	go c.loopMetrics() // reuse client's implementation
+	go c.loop(context.Background()) // custom implementation
+	go c.loopMetrics()              // reuse client's implementation
 
 	return c, nil
 }
 
 // a copy of client.loop() function.
-func (c *s3Client) loop() {
+func (c *s3Client) loop(ctx context.Context) {
 	defer close(c.shutdown)
 
 	wg := &sync.WaitGroup{}
@@ -119,10 +119,10 @@ func (c *s3Client) loop() {
 	for {
 		select {
 		case msg := <-c.msgs:
-			c.push(&bw, msg, wg, ex)
+			c.push(ctx, &bw, msg, wg, ex)
 
 		case <-tick.C:
-			c.flush(&bw, wg, ex)
+			c.flush(ctx, &bw, wg, ex)
 
 		case <-c.quit:
 			c.debugf("exit requested – draining messages")
@@ -131,10 +131,10 @@ func (c *s3Client) loop() {
 			// messages can be pushed and otherwise the loop would never end.
 			close(c.msgs)
 			for msg := range c.msgs {
-				c.push(&bw, msg, wg, ex)
+				c.push(ctx, &bw, msg, wg, ex)
 			}
 
-			c.flush(&bw, wg, ex)
+			c.flush(ctx, &bw, wg, ex)
 			bw.buf.Close()
 			c.debugf("exit")
 			return
@@ -197,7 +197,7 @@ func (m *tagsOnlyMsg) validate() error {
 	return nil
 }
 
-func (c *s3Client) push(encoder *bufferedEncoder, m Message, wg *sync.WaitGroup, ex *executor) {
+func (c *s3Client) push(ctx context.Context, encoder *bufferedEncoder, m Message, wg *sync.WaitGroup, ex *executor) {
 	c.setTagsIfExsist(m)
 
 	ready, err := c.encodeMessage(encoder, m)
@@ -209,7 +209,7 @@ func (c *s3Client) push(encoder *bufferedEncoder, m Message, wg *sync.WaitGroup,
 
 	if ready {
 		c.debugf("exceeded messages batch limit with batch of %d messages – flushing", encoder.messages)
-		c.sendAsync(encoder, wg, ex)
+		c.sendAsync(ctx, encoder, wg, ex)
 	}
 }
 
@@ -241,7 +241,7 @@ func (c *s3Client) encodeMessage(bw *bufferedEncoder, m Message) (ready bool, er
 }
 
 // Asynchronously send a batched requests.
-func (c *s3Client) sendAsync(bw *bufferedEncoder, wg *sync.WaitGroup, ex *executor) {
+func (c *s3Client) sendAsync(ctx context.Context, bw *bufferedEncoder, wg *sync.WaitGroup, ex *executor) {
 	if bw.BytesLen() == 0 {
 		c.errorf("empty buffer, send is not possible")
 		return
@@ -266,7 +266,7 @@ func (c *s3Client) sendAsync(bw *bufferedEncoder, wg *sync.WaitGroup, ex *execut
 				c.errorf("panic - %s", err)
 			}
 		}()
-		c.send(buf, msgs)
+		c.send(ctx, buf, msgs)
 	}) {
 		wg.Done()
 		c.errorf("sending messages failed - %s", ErrTooManyRequests)
@@ -274,16 +274,16 @@ func (c *s3Client) sendAsync(bw *bufferedEncoder, wg *sync.WaitGroup, ex *execut
 	}
 }
 
-func (c *s3Client) flush(bw *bufferedEncoder, wg *sync.WaitGroup, ex *executor) {
+func (c *s3Client) flush(ctx context.Context, bw *bufferedEncoder, wg *sync.WaitGroup, ex *executor) {
 	msgs := bw.TotalMsgs()
 	if msgs > 0 {
 		c.debugf("flushing %d messages", msgs)
-		c.sendAsync(bw, wg, ex)
+		c.sendAsync(ctx, bw, wg, ex)
 	}
 }
 
 // Send batch request.
-func (c *s3Client) send(buf encodedBuffer, msgs int) {
+func (c *s3Client) send(ctx context.Context, buf encodedBuffer, msgs int) {
 	const attempts = 10
 	defer buf.Close()
 
@@ -293,7 +293,7 @@ func (c *s3Client) send(buf encodedBuffer, msgs int) {
 			c.errorf("can't get reader", err)
 		}
 
-		if err = c.upload(reader); err == nil {
+		if err = c.upload(ctx, reader); err == nil {
 			c.notifySuccessMsg(&c.tagsOnlyMsg, int64(msgs))
 			return
 		}
@@ -313,7 +313,7 @@ func (c *s3Client) send(buf encodedBuffer, msgs int) {
 }
 
 // Upload batch to S3.
-func (c *s3Client) upload(r io.Reader) error {
+func (c *s3Client) upload(ctx context.Context, r io.Reader) error {
 	key := c.config.S3.KeyConstructor(c.now, uid)
 	c.debugf("uploading to s3://%s/%s", c.config.S3.Bucket, key)
 
@@ -322,7 +322,7 @@ func (c *s3Client) upload(r io.Reader) error {
 		Bucket: aws.String(c.config.S3.Bucket),
 		Key:    aws.String(key),
 	}
-	_, err := c.uploader.Upload(context.Background(), input)
+	_, err := c.uploader.Upload(ctx, input)
 	return err
 }
 
