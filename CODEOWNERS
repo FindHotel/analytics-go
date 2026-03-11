@@ -1,0 +1,8 @@
+# analytics-go — code ownership for review (Git Best Practices)
+# Default owner: [META] Offers Squad
+
+# Protect CODEOWNERS file itself
+/CODEOWNERS @FindHotel/offers-squad
+
+# Default owner for the whole repo
+* @FindHotel/offers-squad
