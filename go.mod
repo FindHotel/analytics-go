@@ -1,8 +1,6 @@
 module github.com/FindHotel/analytics-go/v4
 
-go 1.21
-
-toolchain go1.23.3
+go 1.24
 
 require (
 	github.com/DataDog/datadog-go/v5 v5.5.0
@@ -10,7 +8,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.29.2
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.17.54
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.74.1
-	github.com/rcrowley/go-metrics v0.0.0-20181016184325-3113b8401b8a
 	github.com/segmentio/backo-go v0.0.0-20160424052352-204274ad699c
 	github.com/segmentio/conf v1.0.0
 	github.com/stretchr/testify v1.8.1
@@ -19,7 +16,7 @@ require (
 
 require (
 	github.com/Microsoft/go-winio v0.5.0 // indirect
-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.8 // indirect
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.55 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.25 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.29 // indirect
@@ -33,7 +30,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.24.12 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.28.11 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.33.10 // indirect
-	github.com/aws/smithy-go v1.22.2 // indirect
+	github.com/aws/smithy-go v1.24.2 // indirect
 	github.com/bmizerany/assert v0.0.0-20160611221934-b7ed37b82869 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
